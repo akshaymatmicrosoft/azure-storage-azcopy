@@ -751,7 +751,7 @@ func (jpm *jobPartMgr) SourceProviderPipeline() pipeline.Pipeline {
 
 /* Status update messages should not fail */
 func (jpm *jobPartMgr) SendXferDoneMsg(msg xferDoneMsg) {
-	jpm.jobMgr.SendXferDoneMsg(msg)
+	jpm.jobMgr.SMUpdateXferDone(msg)
 }
 
 // TODO: Can we delete this method?

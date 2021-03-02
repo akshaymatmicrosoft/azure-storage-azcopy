@@ -83,10 +83,10 @@ type IJobMgr interface {
 	common.ILoggerCloser
 
 	/* Status related functions */
-	SendJobPartCreatedMsg(msg jobPartCreatedMsg)
-	SendXferDoneMsg(msg xferDoneMsg)
+	InitStatusMgr(js *common.ListJobSummaryResponse)
+	SMUpdateJobpartCreated(msg jobPartCreatedMsg)
+	SMUpdateXferDone(msg xferDoneMsg)
 	ListJobSummary() common.ListJobSummaryResponse
-	ResurrectSummary(js common.ListJobSummaryResponse)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -96,10 +96,6 @@ func newJobMgr(concurrency ConcurrencySettings, jobID common.JobID, appCtx conte
 	enableChunkLogOutput := level.ToPipelineLogLevel() == pipeline.LogDebug
 	/* Create book-keeping channels */
 	jobPartProgressCh := make(chan jobPartProgressInfo)
-	jstm.respChan = make(chan common.ListJobSummaryResponse)
-	jstm.listReq = make(chan bool)
-	jstm.partCreated = make(chan jobPartCreatedMsg)
-	jstm.xferDone = make(chan xferDoneMsg)
 
 	jm := jobMgr{jobID: jobID, jobPartMgrs: newJobPartToJobPartMgr(), include: map[string]int{}, exclude: map[string]int{},
 		httpClient:                    NewAzcopyHTTPClient(concurrency.MaxIdleConnections),
@@ -115,7 +111,6 @@ func newJobMgr(concurrency ConcurrencySettings, jobID common.JobID, appCtx conte
 	jm.reset(appCtx, commandString)
 	jm.logJobsAdminMessages()
 	go jm.reportJobPartDoneHandler()
-	go jm.handleStatusUpdateMessage()
 	return &jm
 }
 

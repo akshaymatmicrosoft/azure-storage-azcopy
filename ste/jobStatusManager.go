@@ -21,7 +21,8 @@
 package ste
 
 import (
-	"time"
+	"sync"
+	"fmt"
 
 	"github.com/Azure/azure-storage-azcopy/common"
 )
@@ -36,69 +37,68 @@ type jobPartCreatedMsg struct {
 
 type xferDoneMsg = common.TransferDetail
 type jobStatusManager struct {
-	js          common.ListJobSummaryResponse
-	respChan    chan common.ListJobSummaryResponse
-	listReq     chan bool
-	partCreated chan jobPartCreatedMsg
-	xferDone    chan xferDoneMsg
+	m           sync.Mutex
+	js          *common.ListJobSummaryResponse
 }
 
 var jstm jobStatusManager
 
-/* These functions should not fail */
-func (jm *jobMgr) SendJobPartCreatedMsg(msg jobPartCreatedMsg) {
-	jstm.partCreated <- msg
-}
 
-func (jm *jobMgr) SendXferDoneMsg(msg xferDoneMsg) {
-	jstm.xferDone <- msg
-}
+/*
+ * InitStatusMgr is to be performed only when the paused/cancelled job is resumed. 
+ * If this routine is called after js is initialized, we'll cause inconsistencies
+ * in accounting.
+ */
+func (jm *jobMgr) InitStatusMgr(js *common.ListJobSummaryResponse) {
+	jstm.m.Lock()
+	defer jstm.m.Unlock()
 
-func (jm *jobMgr) ListJobSummary() common.ListJobSummaryResponse {
-	jstm.listReq <- true
-	return <-jstm.respChan
-}
+	if jstm.js != nil {
+		jm.Panic(fmt.Errorf("StatusMgr already init"))
+	}
 
-func (jm *jobMgr) ResurrectSummary(js common.ListJobSummaryResponse) {
 	jstm.js = js
 }
 
-func (jm *jobMgr) handleStatusUpdateMessage() {
-	js := &jstm.js
-	js.JobID = jm.jobID
-	js.CompleteJobOrdered = false
-	js.ErrorMsg = ""
+/* These functions should not fail */
+func (jm *jobMgr) SMUpdateJobpartCreated(msg jobPartCreatedMsg) {
+	js := jstm.js
+	jstm.m.Lock()
+	defer jstm.m.Unlock()
 
-	for {
-		select {
-		case msg := <-jstm.partCreated:
-			js.CompleteJobOrdered = js.CompleteJobOrdered || msg.isFinalPart
-			js.TotalTransfers += msg.totalTransfers
-			js.FileTransfers += msg.fileTransfers
-			js.FolderPropertyTransfers += msg.folderTransfer
-			js.TotalBytesEnumerated += msg.totalBytesEnumerated
-			js.TotalBytesExpected += msg.totalBytesEnumerated
+	js.CompleteJobOrdered = js.CompleteJobOrdered || msg.isFinalPart
+	js.TotalTransfers += msg.totalTransfers
+	js.FileTransfers += msg.fileTransfers
+	js.FolderPropertyTransfers += msg.folderTransfer
+	js.TotalBytesEnumerated += msg.totalBytesEnumerated
+	js.TotalBytesExpected += msg.totalBytesEnumerated
+}
 
-		case msg := <-jstm.xferDone:
-			switch msg.TransferStatus {
-			case common.ETransferStatus.Success():
-				js.TransfersCompleted++
-				js.TotalBytesTransferred += msg.TransferSize
-			case common.ETransferStatus.Failed(),
-				common.ETransferStatus.TierAvailabilityCheckFailure(),
-				common.ETransferStatus.BlobTierFailure():
-				js.TransfersFailed++
-				js.FailedTransfers = append(js.FailedTransfers, common.TransferDetail(msg))
-			case common.ETransferStatus.SkippedEntityAlreadyExists(),
-				common.ETransferStatus.SkippedBlobHasSnapshots():
-				js.TransfersSkipped++
-				js.SkippedTransfers = append(js.SkippedTransfers, common.TransferDetail(msg))
-			}
+func (jm *jobMgr) SMUpdateXferDone(msg xferDoneMsg) {
+	js := jstm.js
+	jstm.m.Lock()
+	defer jstm.m.Unlock()
 
-		case <-jstm.listReq:
-			/* Display stats */
-			js.Timestamp = time.Now().UTC()
-			jstm.respChan <- *js
-		}
+	switch msg.TransferStatus {
+		case common.ETransferStatus.Success():
+			js.TransfersCompleted++
+			js.TotalBytesTransferred += msg.TransferSize
+		case common.ETransferStatus.Failed(),
+			common.ETransferStatus.TierAvailabilityCheckFailure(),
+			common.ETransferStatus.BlobTierFailure():
+			js.TransfersFailed++
+			js.FailedTransfers = append(js.FailedTransfers, common.TransferDetail(msg))
+		case common.ETransferStatus.SkippedEntityAlreadyExists(),
+			common.ETransferStatus.SkippedBlobHasSnapshots():
+			js.TransfersSkipped++
+			js.SkippedTransfers = append(js.SkippedTransfers, common.TransferDetail(msg))
 	}
+}
+
+func (jm *jobMgr) ListJobSummary() common.ListJobSummaryResponse {
+	jstm.m.Lock()
+	defer jstm.m.Unlock()
+
+	js := *jstm.js
+	return js
 }

@@ -142,6 +142,11 @@ func ExecuteNewCopyJobPartOrder(order common.CopyJobPartOrderRequest) common.Cop
 	jppfn := JobsAdmin.NewJobPartPlanFileName(order.JobID, order.PartNum)
 	jppfn.Create(order)                                                                   // Convert the order to a plan file
 	jpm := JobsAdmin.JobMgrEnsureExists(order.JobID, order.LogLevel, order.CommandString) // Get a this job part's job manager (create it if it doesn't exist)
+	
+	//If this is first part, initialize status manager.
+	if order.PartNum == 0 {
+		jpm.InitStatusMgr(&common.ListJobSummaryResponse{})
+	}
 
 	if len(order.Transfers.List) == 0 && order.IsFinalPart {
 		/*
@@ -160,7 +165,7 @@ func ExecuteNewCopyJobPartOrder(order common.CopyJobPartOrderRequest) common.Cop
 	jpm.AddJobPart(order.PartNum, jppfn, nil, order.SourceRoot.SAS, order.DestinationRoot.SAS, true) // Add this part to the Job and schedule its transfers
 
 	// Update jobPart Status with the status Manager
-	jpm.SendJobPartCreatedMsg(jobPartCreatedMsg{totalTransfers: uint32(len(order.Transfers.List)),
+	jpm.SMUpdateJobpartCreated(jobPartCreatedMsg{totalTransfers: uint32(len(order.Transfers.List)),
 		isFinalPart:          order.IsFinalPart,
 		totalBytesEnumerated: order.Transfers.TotalSizeInBytes,
 		fileTransfers:        order.Transfers.FileTransferCount,
@@ -417,6 +422,10 @@ func GetJobSummary(jobID common.JobID) common.ListJobSummaryResponse {
 	}
 
 	js := jm.ListJobSummary()
+	js.Timestamp = time.Now().UTC()
+	js.JobID = jm.JobID()
+	js.CompleteJobOrdered = false
+	js.ErrorMsg = ""
 	part0, ok := jm.JobPartMgr(0)
 	if !ok {
 		return js

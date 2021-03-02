@@ -651,7 +651,7 @@ func (ja *jobsAdmin) ResurrectJob(jobId common.JobID, sourceSAS string, destinat
 
 	jm, _ := ja.JobMgr(jobId)
 	js := resurrectJobSummary(jm)
-	jm.ResurrectSummary(js)
+	jm.InitStatusMgr(&js)
 
 	return true
 }
